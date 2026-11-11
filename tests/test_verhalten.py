@@ -432,3 +432,66 @@ def test_clipboard_paste(window: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def test_layout_rejects_bad_ratio() -> None:
     with pytest.raises(ValueError):
         layout.distributeObjects([1], 0)
+
+
+# --- Zwischenspeicher ---------------------------------------------------------------
+
+def test_scaled_is_cached_and_matches_transform(window: Path) -> None:
+    graphy.clearCache()
+    source = _red((8, 4))
+    source.set_at((0, 0), (0, 255, 0))
+    first = graphy._scaled(source, (16, 8), True, False)
+    assert graphy._scaled(source, (16, 8), True, False) is first
+    expected = pygame.transform.scale(pygame.transform.flip(source, True, False), (16, 8))
+    assert pygame.image.tobytes(first, "RGB") == pygame.image.tobytes(expected, "RGB")
+
+
+def test_rotated_is_cached_and_zero_is_identity(window: Path) -> None:
+    graphy.clearCache()
+    source = _red((8, 4))
+    assert graphy._rotated(source, 0) is source
+    assert graphy._rotated(source, 360) is source
+    turned = graphy._rotated(source, 90)
+    assert graphy._rotated(source, 90) is turned
+    assert turned.get_size() == (4, 8)
+
+
+def test_cache_respects_pixel_budget(window: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    graphy.clearCache()
+    monkeypatch.setattr(graphy, "_CACHE_PIXEL_LIMIT", 1000)
+    source = _red((4, 4))
+    for size in range(10, 20):
+        graphy._scaled(source, (size, size))
+    assert sum(w * h for _, s in graphy._scale_cache.values() for w, h in [s.get_size()]) <= 1000
+    graphy.clearCache()
+
+
+def test_key_repeat_after_delay(window: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [100.0]
+    monkeypatch.setattr(graphy.time, "monotonic", lambda: clock[0])
+    pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_w, unicode="w", mod=0))
+    graphy.draw()
+    assert pygame.K_w not in graphy.exeKeys
+    clock[0] += 0.3
+    graphy.draw()
+    assert pygame.K_w in graphy.exeKeys
+    pygame.event.post(pygame.event.Event(pygame.KEYUP, key=pygame.K_w, mod=0))
+    graphy.draw()
+    assert pygame.K_w not in graphy.exeKeys
+
+
+def test_scaled_window_output_matches(asset_root: Path, shutdown) -> None:
+    graphy.init(file=str(asset_root / "main.py"), windowRes=(960, 540), nativeRes=NATIVE, singleSizeOn=False)
+    graphy.RenderImage(imageName="rot", x=0, y=0, width=200, height=200)
+    graphy.draw()
+    assert graphy.realScreen is not None
+    assert graphy.realScreen.get_at((50, 50))[:3] == (255, 0, 0)
+    assert graphy.realScreen.get_at((150, 150))[:3] == (50, 50, 50)
+    shutdown()
+
+
+def test_window_size_differs_from_resolution(asset_root: Path, shutdown, monkeypatch: pytest.MonkeyPatch) -> None:
+    graphy.init(file=str(asset_root / "main.py"), windowRes=(960, 540), nativeRes=NATIVE, singleSizeOn=False)
+    graphy.realScreen = pygame.Surface((800, 600))
+    graphy.draw()
+    shutdown()

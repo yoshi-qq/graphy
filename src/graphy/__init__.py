@@ -15,8 +15,8 @@ import sys
 import threading
 import time
 import warnings
-from collections import deque
-from typing import Any, Callable, Literal, Optional, TextIO, TypeVarTuple, Union
+from collections import OrderedDict, deque
+from typing import Any, Callable, Literal, Optional, TextIO, TypeVarTuple, Union, cast
 
 import pygame
 from pygame.locals import DOUBLEBUF, FULLSCREEN, HWSURFACE
@@ -87,6 +87,75 @@ realScreen: Optional[pygame.Surface] = None
 clock: Optional[pygame.time.Clock] = None
 _keys_lock = threading.Lock()
 _missing_sprites_warned: set[str] = set()
+_key_down_at: dict[int, float] = {}
+
+# Skalieren und Drehen sind die teuersten Schritte pro Bild. Ergebnisse werden nach
+# Quellfläche, Zielgröße und Winkel zwischengespeichert. Der Eintrag hält die Quellfläche fest,
+# damit ihre id() nicht für eine neue Fläche wiederverwendet werden kann.
+_CACHE_LIMIT = 4096
+_CACHE_PIXEL_LIMIT = 16_000_000
+_cache_pixels: dict[int, int] = {}
+_scale_cache: OrderedDict[tuple[int, int, int, bool, bool], tuple[pygame.Surface, pygame.Surface]] = OrderedDict()
+_rotate_cache: OrderedDict[tuple[int, float], tuple[pygame.Surface, pygame.Surface]] = OrderedDict()
+
+
+def _cache_get(cache: OrderedDict[Any, tuple[pygame.Surface, pygame.Surface]], key: Any) -> Optional[pygame.Surface]:
+    entry = cache.get(key)
+    if entry is None:
+        return None
+    cache.move_to_end(key)
+    return entry[1]
+
+
+def _cache_put(cache: OrderedDict[Any, tuple[pygame.Surface, pygame.Surface]], key: Any, source: pygame.Surface,
+               result: pygame.Surface) -> pygame.Surface:
+    """Legt ab und verdrängt die ältesten Einträge, sobald Anzahl oder Pixelsumme die Grenze überschreiten."""
+    budget = id(cache)
+    width, height = result.get_size()
+    cache[key] = (source, result)
+    _cache_pixels[budget] = _cache_pixels.get(budget, 0) + width * height
+    while len(cache) > 1 and (len(cache) > _CACHE_LIMIT or _cache_pixels[budget] > _CACHE_PIXEL_LIMIT):
+        _, (_, evicted) = cache.popitem(last=False)
+        evicted_width, evicted_height = evicted.get_size()
+        _cache_pixels[budget] -= evicted_width * evicted_height
+    return result
+
+
+def _scaled(source: pygame.Surface, size: tuple[int, int], flip_x: bool = False, flip_y: bool = False) -> pygame.Surface:
+    """source in size, optional gespiegelt; gleiche Anfragen kosten nur einen Dictionary-Zugriff."""
+    key = (id(source), size[0], size[1], flip_x, flip_y)
+    cached = _cache_get(_scale_cache, key)
+    if cached is not None:
+        return cached
+    result = pygame.transform.flip(source, flip_x, flip_y) if flip_x or flip_y else source
+    if result.get_size() != size:
+        result = pygame.transform.scale(result, size)
+    return _cache_put(_scale_cache, key, source, result)
+
+
+def _rotated(source: pygame.Surface, angle: float) -> pygame.Surface:
+    """source um -angle Grad gedreht (im Uhrzeigersinn), zwischengespeichert."""
+    if angle % 360 == 0:
+        return source
+    key = (id(source), angle)
+    cached = _cache_get(_rotate_cache, key)
+    if cached is not None:
+        return cached
+    return _cache_put(_rotate_cache, key, source, pygame.transform.rotate(source, -angle))
+
+
+def clearCache() -> None:
+    """Leert die Zwischenspeicher für skalierte und gedrehte Bilder."""
+    _scale_cache.clear()
+    _rotate_cache.clear()
+    _cache_pixels.clear()
+
+
+def _display_ready(surface: pygame.Surface) -> pygame.Surface:
+    """Wandelt in das Pixelformat des Fensters um, damit Blits schnell sind."""
+    if pygame.display.get_init() and pygame.display.get_surface() is not None:
+        return surface.convert_alpha()
+    return surface
 
 
 def getClipboard() -> str:
@@ -287,7 +356,7 @@ def drawNormal(surface: pygame.Surface, img: pygame.Surface, x: float = 0, y: fl
     left, top = round(x * rx), round(y * ry)
     size = (max(0, round(width * rx)), max(0, round(height * ry)))
     if abs(img.get_width() - size[0]) > 1 or abs(img.get_height() - size[1]) > 1:
-        img = pygame.transform.scale(img, size)
+        img = _scaled(img, size)
     if middle:
         surface.blit(img, (left - img.get_width() / 2, top - img.get_height() / 2))
     else:
@@ -299,10 +368,7 @@ def drawRotated(surface: pygame.Surface, img: pygame.Surface, x: float = 0, y: f
                 stretch: float = 1) -> None:
     """Zeichnet img gedreht um seine Mitte. Ohne middle sind x, y die linke obere Ecke."""
     w, h = max(0, round(width * rx * stretch)), max(0, round(height * ry))
-    img = pygame.transform.scale(img, (w, h))
-    if flipped:
-        img = pygame.transform.flip(img, False, True)
-    rotated = pygame.transform.rotate(img, -angle)
+    rotated = _rotated(_scaled(img, (w, h), False, flipped), angle)
     pivot = (x * rx, y * ry) if middle else (x * rx + w / 2, y * ry + h / 2)
     surface.blit(rotated, rotated.get_rect(center=(round(pivot[0]), round(pivot[1]))).topleft)
 
@@ -429,12 +495,13 @@ def _handle_event(event: pygame.event.Event) -> bool:
         else:
             with _keys_lock:
                 keys.add(event.key)
-            threading.Thread(target=pressDelay, args=(event.key, _KEY_REPEAT_DELAY), daemon=True).start()
+                _key_down_at[event.key] = time.monotonic()
             keyPress(event.key)
     elif event.type == pygame.KEYUP:
         with _keys_lock:
             keys.discard(event.key)
             exeKeys.discard(event.key)
+            _key_down_at.pop(event.key, None)
     return True
 
 
@@ -455,6 +522,10 @@ def draw() -> DrawResult:
             pygame.quit()
             return "quit"
     with _keys_lock:
+        now = time.monotonic()
+        for key, pressed_at in _key_down_at.items():
+            if key in keys and now - pressed_at >= _KEY_REPEAT_DELAY:
+                exeKeys.add(key)
         repeating = list(exeKeys)
     for key in repeating:
         keyPress(key)
@@ -475,7 +546,10 @@ def draw() -> DrawResult:
     scrollEvent = 0
     postDraw()
     if realScreen is not None:
-        realScreen.blit(pygame.transform.scale(target, displayResolution), (0, 0))
+        if realScreen.get_size() == displayResolution:
+            pygame.transform.scale(target, displayResolution, realScreen)
+        else:
+            realScreen.blit(pygame.transform.scale(target, displayResolution), (0, 0))
     pygame.display.flip()
     if clock is not None:
         clock.tick(FPS)
@@ -709,9 +783,12 @@ class RenderImage(RenderObject):
                 max(1, round(self.height * self.sizeMulti * ry)))
 
     def _make_trapezoid_surface(self) -> pygame.Surface:
-        img = pygame.transform.flip(self.image, True, False) if self.flipped else self.image
         base_w, h_px = self._scaled_size()
-        img = pygame.transform.scale(img, (base_w, h_px))
+        key = (id(self.image), base_w, h_px, self.topStretchMultiplier, self.flipped)
+        cached = getattr(self, "_trapezoid", None)
+        if cached is not None and cached[0] == key:
+            return cast(pygame.Surface, cached[1])
+        img = _scaled(self.image, (base_w, h_px), self.flipped)
         top_w = max(1, round(base_w * self.topStretchMultiplier))
         max_w = max(top_w, base_w)
         surf = pygame.Surface((max_w, h_px), pygame.SRCALPHA)
@@ -719,6 +796,8 @@ class RenderImage(RenderObject):
             current_w = max(1, round(top_w + (base_w - top_w) * row / h_px))
             row_slice = pygame.transform.scale(img.subsurface((0, row, base_w, 1)), (current_w, 1))
             surf.blit(row_slice, ((max_w - current_w) // 2, row))
+        surf = _display_ready(surf)
+        self._trapezoid = (key, surf)
         return surf
 
     def draw(self) -> None:
@@ -727,8 +806,7 @@ class RenderImage(RenderObject):
         if self.topStretchMultiplier != 1:
             texture = self._make_trapezoid_surface()
         else:
-            texture = pygame.transform.flip(self.image, True, False) if self.flipped else self.image
-            texture = pygame.transform.scale(texture, self._scaled_size())
+            texture = _scaled(self.image, self._scaled_size(), self.flipped)
         x_px = (self.x + self.xOffset) * rx
         y_px = (self.y + self.yOffset) * ry
         if self.middle:
@@ -736,7 +814,7 @@ class RenderImage(RenderObject):
             y_px -= texture.get_height() // 2
         if self.angle != 0:
             center = texture.get_rect(topleft=(round(x_px), round(y_px))).center
-            rotated = pygame.transform.rotate(texture, -self.angle)
+            rotated = _rotated(texture, self.angle)
             self.surface.blit(rotated, rotated.get_rect(center=center).topleft)
         else:
             self.surface.blit(texture, (x_px, y_px))
@@ -994,7 +1072,7 @@ class RenderText(RenderObject):
         self.text = text
         self.color = color
         self.middle = middle
-        self.renderSurface = self.font.render(text, True, color)
+        self.renderSurface = _display_ready(self.font.render(text, True, color))
         super().__init__(surface=surface, temporary=temporary, enabled=enabled, x=x, y=y, xOffset=xOffset,
                          yOffset=yOffset, width=self.renderSurface.get_width(),
                          height=self.renderSurface.get_height(), priority=priority, angle=angle, stretch=stretch)
@@ -1006,7 +1084,7 @@ class RenderText(RenderObject):
         self.update()
 
     def update(self) -> None:
-        self.renderSurface = self.font.render(self.text, True, self.color)
+        self.renderSurface = _display_ready(self.font.render(self.text, True, self.color))
         self.height = self.renderSurface.get_height()
         self.width = self.renderSurface.get_width()
 
