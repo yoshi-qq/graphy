@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "graphy"
+version = "1.0.0"
+description = "Kleine Render-Schicht über pygame: Fenster, Sprites, Knöpfe, Text, Eingabefelder."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pygame>=2.5",
+    "screeninfo>=0.8",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+graphy = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
