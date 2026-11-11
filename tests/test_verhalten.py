@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 import pygame
@@ -49,9 +50,11 @@ def test_rect_overlap() -> None:
     assert graphy.rectOverlap((0, 0, 0, 10), (0, 0, 10, 10)) is False
 
 
-@pytest.mark.xfail(strict=True, raises=TypeError, reason="Fehler aus allen Kopien übernommen: tuple() mit drei Argumenten")
 def test_hex() -> None:
     assert graphy.hex("#ff8000") == (255, 128, 0)
+    assert graphy.hex("00ff10") == (0, 255, 16)
+    with pytest.raises(ValueError):
+        graphy.hex("#fff")
 
 
 def test_classes_is_noop() -> None:
@@ -75,7 +78,7 @@ def test_console_counts_repeats(monkeypatch: pytest.MonkeyPatch, capsys: pytest.
     log.log(2, "!", "Fehler")
     assert log.messages["Fehler"][1] == 2
     assert log.messages["Fehler"][0] == "! |Fehler"
-    assert "Fehler" in capsys.readouterr().out
+    assert capsys.readouterr().out.splitlines() == ["! |Fehler"]
 
 
 # --- Fenster und Sprites ------------------------------------------------------
@@ -256,12 +259,13 @@ def test_text_uses_font_from_init(asset_root: Path, shutdown, monkeypatch: pytes
     requested: list[object] = []
     original = pygame.font.Font
 
-    def spy(font, size):
-        requested.append(font)
-        return original(None, size)
+    class SpyFont(original):  # type: ignore[misc, valid-type]
+        def __init__(self, font: object, size: int) -> None:
+            requested.append(font)
+            super().__init__(None, size)
 
     graphy.init(file=str(asset_root / "main.py"), windowRes=NATIVE, singleSizeOn=True, fontPath="eigene.ttf")
-    monkeypatch.setattr(pygame.font, "Font", spy)
+    monkeypatch.setattr(pygame.font, "Font", SpyFont)
     graphy.RenderText(text="a", gen=False)
     graphy.RenderText(text="b", font="andere.ttf", gen=False)
     assert requested == ["eigene.ttf", "andere.ttf"]
@@ -304,8 +308,10 @@ def test_slider_changes_value(window: Path) -> None:
     slider = graphy.RenderSlider(step=10, range=(0, 100), imageName="rot", sliderImageName="icon",
                                  width=200, height=20, updateAction=values.append)
     assert slider in graphy.renders
+    assert slider.value == 50
     slider.change(3)
-    assert slider.value == pytest.approx(30.5)
+    assert slider.value == 80
+    assert slider.sliderPos == pytest.approx(0.6)
     slider.change(100)
     assert slider.value == 100
     assert values[-1] == 100
@@ -332,3 +338,97 @@ def test_game_object_syncs(window: Path) -> None:
     game_object.x = 9
     game_object.update()
     assert (image.x, image.y, image.strName) == (9, 4, "spieler")
+
+
+# --- behobene Fehler ------------------------------------------------------------
+
+def test_missing_sprite_shows_placeholder(window: Path) -> None:
+    with pytest.warns(UserWarning, match="fehlt_noch"):
+        image = graphy.RenderImage(imageName="fehlt_noch", width=8, height=8)
+    graphy.draw()
+    assert image.image.get_at((0, 0))[:3] == (255, 0, 255)
+
+
+def test_missing_sprite_folder_is_empty(tmp_path: Path, shutdown) -> None:
+    graphy.init(file=str(tmp_path / "main.py"), windowRes=NATIVE, singleSizeOn=True)
+    assert graphy.sprites == {}
+    shutdown()
+
+
+def test_init_without_file_uses_main_script(monkeypatch: pytest.MonkeyPatch, asset_root: Path, shutdown) -> None:
+    import types
+    fake_main = types.ModuleType("__main__")
+    fake_main.__file__ = str(asset_root / "main.py")
+    monkeypatch.setitem(sys.modules, "__main__", fake_main)
+    graphy.init(windowRes=NATIVE, singleSizeOn=True)
+    assert "rot" in graphy.sprites
+    shutdown()
+
+
+def test_sprite_name_only_strips_suffix(asset_root: Path, shutdown) -> None:
+    pygame.image.save(pygame.Surface((2, 2)), str(asset_root / "assets" / "png_rahmen.png"))
+    graphy.init(file=str(asset_root / "main.py"), windowRes=NATIVE, singleSizeOn=True, spriteExtension="png")
+    assert "png_rahmen" in graphy.sprites
+    shutdown()
+
+
+def test_temporary_renders_are_all_removed(window: Path) -> None:
+    kept = graphy.RenderImage(imageName="rot")
+    for _ in range(3):
+        graphy.RenderImage(imageName="rot", temporary=True)
+    graphy.draw()
+    assert graphy.renders == [kept]
+
+
+def test_string_action_resolves_method(window: Path) -> None:
+    button = graphy.RenderButton(imageName="rot", clickAction="self.hide")
+    button.click(True, pygame.BUTTON_LEFT)
+    assert button.enabled is False
+    with pytest.raises(ValueError):
+        graphy.RenderButton(imageName="rot", clickAction="print('x')")
+
+
+def test_text_button_with_image_and_default_hover(window: Path) -> None:
+    button = graphy.RenderTextButton(imageName="rot", text="ok", width=20, height=10)
+    assert isinstance(button.activeSurface, pygame.Surface)
+    with pytest.raises(ValueError):
+        graphy.RenderTextButton(drawType="stern")
+
+
+def test_animation_needs_images(window: Path) -> None:
+    with pytest.raises(ValueError):
+        graphy.RenderAnimation()
+
+
+def test_game_object_needs_render_object() -> None:
+    with pytest.raises(ValueError):
+        graphy.GameObject()
+
+
+def test_render_before_init_has_clear_error(shutdown) -> None:
+    shutdown()
+    graphy.screen = None
+    with pytest.raises(RuntimeError, match="init"):
+        graphy.RenderText(text="x")
+
+
+def test_image_update_reloads_sprite(window: Path) -> None:
+    image = graphy.RenderImage(imageName="rot", gen=False)
+    graphy.sprites["rot"] = (_red((3, 3)), "", False)
+    image.update()
+    assert image.image.get_size() == (3, 3)
+
+
+def test_clipboard_paste(window: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    field = graphy.RenderInput(text="", size=20)
+    field.setOn(True)
+    monkeypatch.setattr(graphy, "getClipboard", lambda: "eingefügt")
+    monkeypatch.setattr(pygame.key, "get_mods", lambda: pygame.KMOD_CTRL)
+    pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_v, unicode="v", mod=pygame.KMOD_CTRL))
+    graphy.draw()
+    assert field.text == "eingefügt"
+
+
+def test_layout_rejects_bad_ratio() -> None:
+    with pytest.raises(ValueError):
+        layout.distributeObjects([1], 0)
