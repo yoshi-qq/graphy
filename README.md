@@ -4,6 +4,12 @@ Kleine Render-Schicht über pygame: Fenster, Sprites, Knöpfe, Text, Eingabefeld
 
 ## Installation
 
+graphy nutzt [pygame-ce](https://pyga.me), die gepflegte Abspaltung von pygame (`import pygame` bleibt gleich). Ist das alte pygame installiert, vorher entfernen:
+
+```bash
+pip uninstall pygame
+```
+
 ```bash
 pip install "graphy @ git+https://github.com/yoshi-qq/graphy.git"
 ```

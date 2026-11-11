@@ -9,7 +9,7 @@ description = "Kleine Render-Schicht über pygame: Fenster, Sprites, Knöpfe, Te
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "pygame>=2.5",
+    "pygame-ce>=2.5",
     "screeninfo>=0.8",
 ]
 
@@ -24,7 +24,6 @@ graphy = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-filterwarnings = ["ignore:pkg_resources is deprecated:UserWarning"]
 
 [tool.mypy]
 strict = true

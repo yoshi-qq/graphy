@@ -6,6 +6,9 @@ Versionen nach [SemVer](https://semver.org/lang/de/). Datum TT.MM.JJJJ.
 
 Schneller, Verhalten unverändert.
 
+### Geändert
+- Abhängigkeit `pygame` durch `pygame-ce` ersetzt (gleiche Schnittstelle, `import pygame` bleibt). pygame und pygame-ce schließen sich aus: vorher `pip uninstall pygame`.
+
 ### Neu
 - `clearCache()` leert die Zwischenspeicher für skalierte und gedrehte Bilder.
 - `bench/bench_draw.py` misst die Zeit pro Bild.
@@ -18,14 +21,14 @@ Schneller, Verhalten unverändert.
 - Skaliertes Fenster (`singleSizeOn=False`) schreibt direkt in die Fensterfläche statt über eine Zwischenfläche.
 - Tastenwiederholung ohne einen Thread je Tastendruck.
 
-Messung (ohne Fenster, 300 Bilder, 383 Objekte, Median):
+Messung (ohne Fenster, 300 Bilder, 383 Objekte, Median, je zwei Läufe):
 
-| Szene | 1.1.0 | 1.2.0 |
-|---|---|---|
-| 1920×1080, singleSize | 10,3–10,9 ms | 5,3–6,5 ms |
-| 960×540, singleSize | 3,5–3,8 ms | 1,9–2,2 ms |
-| 960×540, skaliert | 10,7–11,2 ms | 6,8 ms |
-| 1920×1080 + 40 temporäre je Bild | 11,1–12,5 ms | 6,3–6,6 ms |
+| Szene | 1.1.0 (pygame) | 1.2.0 mit pygame | 1.2.0 mit pygame-ce |
+|---|---|---|---|
+| 1920×1080, singleSize | 10,3–10,9 ms | 5,3–6,5 ms | 4,4–5,3 ms |
+| 960×540, singleSize | 3,5–3,8 ms | 1,9–2,2 ms | 1,4 ms |
+| 960×540, skaliert | 10,7–11,2 ms | 6,8 ms | 5,1–5,3 ms |
+| 1920×1080 + 40 temporäre je Bild | 11,1–12,5 ms | 6,3–6,6 ms | 5,0–5,7 ms |
 
 ## 1.1.0 – 11.11.2026
 
