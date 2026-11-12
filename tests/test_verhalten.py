@@ -495,3 +495,44 @@ def test_window_size_differs_from_resolution(asset_root: Path, shutdown, monkeyp
     graphy.realScreen = pygame.Surface((800, 600))
     graphy.draw()
     shutdown()
+
+
+# --- Unsichtbares überspringen --------------------------------------------------
+
+@pytest.mark.parametrize("x,y,angle,middle,outside", [
+    (50, 50, 0, False, False),
+    (-10, 50, 0, False, True),       # genau links daneben
+    (-9, 50, 0, False, False),       # ragt 1 px hinein
+    (100, 50, 0, False, True),
+    (50, 100, 0, False, True),
+    (104, 50, 0, True, False),       # Mitte knapp rechts, Hälfte ragt hinein
+    (105, 50, 0, True, True),
+    (-12, 50, 45, False, False),     # gedreht ragt die Ecke hinein
+    (-30, 50, 45, False, True),
+])
+def test_outside_detection(window: Path, x: float, y: float, angle: float, middle: bool, outside: bool) -> None:
+    target = pygame.Surface((100, 100))
+    image = graphy.RenderImage(surface=target, imageName=_red(), x=x, y=y, width=10, height=10, angle=angle,
+                               middle=middle, gen=False)
+    assert image._outside() is outside
+
+
+def test_offscreen_image_is_not_scaled(window: Path) -> None:
+    graphy.clearCache()
+    target = pygame.Surface((100, 100))
+    image = graphy.RenderImage(surface=target, imageName=_red(), x=500, y=500, width=30, height=30, gen=False)
+    image.draw()
+    assert len(graphy._scale_cache) == 0
+    image.x, image.y = 10, 10
+    image.draw()
+    assert len(graphy._scale_cache) == 1
+    assert target.get_at((20, 20))[:3] == (255, 0, 0)
+    graphy.clearCache()
+
+
+def test_offscreen_animation_still_advances(window: Path) -> None:
+    target = pygame.Surface((100, 100))
+    animation = graphy.RenderAnimation(surface=target, imageNames=("rot", "rot"), x=500, y=500, width=10,
+                                       height=10, gen=False)
+    animation.draw()
+    assert animation.frame == 1

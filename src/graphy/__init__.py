@@ -800,13 +800,32 @@ class RenderImage(RenderObject):
         self._trapezoid = (key, surf)
         return surf
 
+    def _outside(self, size: Optional[tuple[int, int]] = None) -> bool:
+        """True, wenn das Bild sicher nicht auf der Zielfläche landet; dann wird nicht skaliert und nicht geblittet."""
+        w, h = size if size is not None else self._scaled_size()
+        if self.topStretchMultiplier > 1:
+            w = round(w * self.topStretchMultiplier)
+        left = (self.x + self.xOffset) * rx
+        top = (self.y + self.yOffset) * ry
+        if self.middle:
+            left -= w // 2
+            top -= h // 2
+        # Gedreht bleibt das Bild im Kreis um seine Mitte mit Radius (w + h) / 2; das reicht als Rand.
+        pad = (w + h) / 2 - min(w, h) / 2 if self.angle % 360 else 0
+        target_w, target_h = self.surface.get_size()
+        return (left - pad >= target_w or top - pad >= target_h
+                or left + w + pad <= 0 or top + h + pad <= 0)
+
     def draw(self) -> None:
         if not self.enabled:
+            return
+        size = self._scaled_size()
+        if self._outside(size):
             return
         if self.topStretchMultiplier != 1:
             texture = self._make_trapezoid_surface()
         else:
-            texture = _scaled(self.image, self._scaled_size(), self.flipped)
+            texture = _scaled(self.image, size, self.flipped)
         x_px = (self.x + self.xOffset) * rx
         y_px = (self.y + self.yOffset) * ry
         if self.middle:

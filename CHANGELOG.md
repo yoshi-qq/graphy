@@ -2,6 +2,23 @@
 
 Versionen nach [SemVer](https://semver.org/lang/de/). Datum TT.MM.JJJJ.
 
+## 1.3.0 – 12.11.2026
+
+### Neu
+- Bilder (`RenderImage` und Unterklassen), die sicher außerhalb ihrer Zielfläche liegen, werden weder skaliert noch geblittet. Animationen zählen ihre Bilder trotzdem weiter.
+- `bench/bench_draw.py`: Szene „Karte“ mit 4000 Kacheln und fahrender Kamera.
+
+Messung (Median, je drei Läufe abwechselnd mit 1.2.0):
+
+| Szene | 1.2.0 | 1.3.0 |
+|---|---|---|
+| Karte 4000 Kacheln, Kamera fährt | 7,2–7,7 ms | 5,7–7,9 ms |
+| Karte mit wechselndem Zoom | 10,5–10,8 ms | 8,6–9,5 ms |
+| 1920×1080, alles sichtbar | 4,1–4,4 ms | 4,4–4,7 ms |
+| 960×540, alles sichtbar | 1,4–1,5 ms | 1,7–1,9 ms |
+
+Die Prüfung kostet etwa 1 µs je Bild. Sie lohnt sich, wenn ein großer Teil der Objekte außerhalb liegt.
+
 ## 1.2.0 – 11.11.2026
 
 Schneller, Verhalten unverändert.

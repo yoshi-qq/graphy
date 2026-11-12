@@ -52,15 +52,30 @@ def _temporary_scene() -> None:
                            y=(index * 29) % 1000, width=48, height=96, angle=index * 9, flipped=index % 2 == 0)
 
 
-def run(label: str, single_size: bool, window: tuple[int, int], per_frame: bool = False) -> float:
+def _map_scene() -> list[graphy.RenderImage]:
+    """Große Karte wie im Karteneditor: 4000 Kacheln auf 8000x4000, sichtbar ist etwa ein Sechzehntel."""
+    tiles = []
+    for index in range(4000):
+        column, row = index % 100, index // 100
+        tiles.append(graphy.RenderImage(imageName=f"kachel{index % 5}", x=column * 80, y=row * 100,
+                                        width=80, height=100))
+    return tiles
+
+
+def run(label: str, single_size: bool, window: tuple[int, int], per_frame: bool = False,
+        scene: str = "standard") -> float:
     with tempfile.TemporaryDirectory() as folder:
         root = Path(folder)
         _make_assets(root)
         graphy.init(file=str(root / "main.py"), fps=0, singleSizeOn=single_size, windowRes=window)
-        _scene()
+        tiles = _map_scene() if scene == "karte" else []
+        if not tiles:
+            _scene()
         times: list[float] = []
         for frame in range(FRAMES + WARMUP):
             start = time.perf_counter()
+            for tile in tiles:
+                tile.xOffset = -frame * 4
             if per_frame:
                 _temporary_scene()
             graphy.draw()
@@ -78,6 +93,7 @@ def main() -> None:
     run("Fenster 960x540, singleSize", True, (960, 540))
     run("Fenster 960x540, skaliert", False, (960, 540))
     run("1920x1080, + 40 temporäre je Bild", True, (1920, 1080), per_frame=True)
+    run("Karte 4000 Kacheln, Kamera fährt", True, (1920, 1080), scene="karte")
 
 
 if __name__ == "__main__":
